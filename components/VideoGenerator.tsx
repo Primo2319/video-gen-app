@@ -2,10 +2,11 @@
 
 import { useState, useCallback } from "react";
 import VideoPlayer from "./VideoPlayer";
+import ImageUploader from "./ImageUploader";
 
 type Status = "idle" | "creating" | "processing" | "succeeded" | "failed";
 
-const MODELS = [
+const TEXT_MODELS = [
   { id: "minimax", name: "MiniMax Video-01", description: "High quality · Cinematic" },
   { id: "wan", name: "WAN 2.1 (480p)", description: "Fast · Good quality" },
 ];
@@ -20,6 +21,7 @@ const EXAMPLES = [
 export default function VideoGenerator() {
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState("minimax");
+  const [image, setImage] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>("idle");
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -60,7 +62,7 @@ export default function VideoGenerator() {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: prompt.trim(), model }),
+        body: JSON.stringify({ prompt: prompt.trim(), model, image }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to start generation");
@@ -84,70 +86,112 @@ export default function VideoGenerator() {
   const isGenerating = status === "creating" || status === "processing";
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
-      {/* Model selector */}
-      <div className="grid grid-cols-2 gap-3">
-        {MODELS.map((m) => (
-          <button
-            key={m.id}
-            onClick={() => setModel(m.id)}
-            disabled={isGenerating}
-            className={`p-4 rounded-xl border text-left transition-all ${
-              model === m.id
-                ? "border-purple-500 bg-purple-500/10 text-white"
-                : "border-white/10 bg-white/5 text-gray-400 hover:border-white/20 hover:text-gray-300"
-            } disabled:opacity-50 disabled:cursor-not-allowed`}
-          >
-            <div className="font-semibold text-sm">{m.name}</div>
-            <div className="text-xs mt-0.5 opacity-60">{m.description}</div>
-          </button>
-        ))}
+    <div className="max-w-2xl mx-auto space-y-4">
+      {/* Reference image uploader */}
+      <div>
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-sm font-medium text-gray-300">Reference Image</span>
+          <span className="text-xs px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-gray-500">
+            optional
+          </span>
+          {image && (
+            <span className="ml-auto text-xs px-2.5 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/30 text-purple-400 font-medium">
+              Image-to-Video
+            </span>
+          )}
+        </div>
+        <ImageUploader image={image} onImageChange={setImage} />
       </div>
 
-      {/* Prompt input box */}
-      <div className="rounded-xl border border-white/10 bg-white/5 focus-within:border-purple-500/60 transition-colors">
-        <textarea
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value.slice(0, 500))}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !isGenerating && prompt.trim()) {
-              handleGenerate();
+      {/* Model selector — only shown when no image */}
+      {!image && (
+        <div>
+          <p className="text-sm font-medium text-gray-300 mb-2">AI Model</p>
+          <div className="grid grid-cols-2 gap-3">
+            {TEXT_MODELS.map((m) => (
+              <button
+                key={m.id}
+                onClick={() => setModel(m.id)}
+                disabled={isGenerating}
+                className={`p-4 rounded-xl border text-left transition-all ${
+                  model === m.id
+                    ? "border-purple-500 bg-purple-500/10 text-white"
+                    : "border-white/10 bg-white/5 text-gray-400 hover:border-white/20 hover:text-gray-300"
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                <div className="font-semibold text-sm">{m.name}</div>
+                <div className="text-xs mt-0.5 opacity-60">{m.description}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Model badge when image is set */}
+      {image && (
+        <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-purple-500/8 border border-purple-500/20">
+          <svg className="w-4 h-4 text-purple-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <p className="text-sm text-purple-300">
+            Using <span className="font-semibold">WAN 2.1 Image-to-Video</span> — your reference image will guide the style and composition of the generated video.
+          </p>
+        </div>
+      )}
+
+      {/* Prompt input */}
+      <div>
+        <p className="text-sm font-medium text-gray-300 mb-2">
+          {image ? "Describe the motion / scene" : "Describe your video"}
+        </p>
+        <div className="rounded-xl border border-white/10 bg-white/5 focus-within:border-purple-500/60 transition-colors">
+          <textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value.slice(0, 500))}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !isGenerating && prompt.trim()) {
+                handleGenerate();
+              }
+            }}
+            placeholder={
+              image
+                ? "e.g. Camera slowly pans right, dramatic lighting, cinematic motion…"
+                : "Describe the video you want to create…"
             }
-          }}
-          placeholder="Describe the video you want to create…"
-          className="w-full bg-transparent text-white placeholder-gray-600 p-4 min-h-[110px] resize-none outline-none text-base"
-          disabled={isGenerating}
-        />
-        <div className="flex items-center justify-between px-4 pb-3 border-t border-white/5">
-          <span className="text-xs text-gray-600">{prompt.length}/500</span>
-          <button
-            onClick={handleGenerate}
-            disabled={!prompt.trim() || isGenerating}
-            className="flex items-center gap-2 px-5 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-blue-600 text-white text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:from-purple-500 hover:to-blue-500 transition-all"
-          >
-            {isGenerating ? (
-              <>
-                <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-                Generating…
-              </>
-            ) : (
-              <>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                Generate Video
-              </>
-            )}
-          </button>
+            className="w-full bg-transparent text-white placeholder-gray-600 p-4 min-h-[100px] resize-none outline-none text-base"
+            disabled={isGenerating}
+          />
+          <div className="flex items-center justify-between px-4 pb-3 border-t border-white/5">
+            <span className="text-xs text-gray-600">{prompt.length}/500</span>
+            <button
+              onClick={handleGenerate}
+              disabled={!prompt.trim() || isGenerating}
+              className="flex items-center gap-2 px-5 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-blue-600 text-white text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:from-purple-500 hover:to-blue-500 transition-all"
+            >
+              {isGenerating ? (
+                <>
+                  <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Generating…
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Generate Video
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Example prompts */}
-      {status === "idle" && (
+      {status === "idle" && !image && (
         <div>
           <p className="text-xs text-gray-600 mb-2">Try an example:</p>
           <div className="flex flex-wrap gap-2">
