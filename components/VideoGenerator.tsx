@@ -134,7 +134,7 @@ export default function VideoGenerator() {
             <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           <p className="text-sm text-purple-300">
-            Using <span className="font-semibold">WAN 2.1 Image-to-Video</span> — your reference image will guide the style and composition of the generated video.
+            Using <span className="font-semibold">MiniMax Video-01</span> — your reference image will be used as the first frame to guide the style and composition of the generated video.
           </p>
         </div>
       )}
