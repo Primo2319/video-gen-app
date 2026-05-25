@@ -3,6 +3,8 @@
 import { useState, useCallback } from "react";
 import VideoPlayer from "./VideoPlayer";
 import ImageUploader from "./ImageUploader";
+import ApiKeySetup from "./ApiKeySetup";
+import { useApiKey } from "@/hooks/useApiKey";
 
 // Load stitching lib only in browser (uses ffmpeg.wasm)
 const stitchVideos = async (urls: string[], onProgress: (p: number) => void) => {
@@ -20,6 +22,7 @@ const DURATION_OPTIONS = [
 ] as const;
 
 type DurationId = (typeof DURATION_OPTIONS)[number]["id"];
+type AspectRatio = "16:9" | "9:16";
 
 const EXAMPLES = [
   "A serene Japanese garden with cherry blossoms falling gently in golden hour light",
@@ -30,10 +33,14 @@ const EXAMPLES = [
 
 async function pollUntilDone(
   id: string,
+  apiKey: string,
   onStatus: (s: ClipStatus) => void
 ): Promise<string> {
   while (true) {
-    const res = await fetch(`/api/status/${id}`);
+    const headers: Record<string, string> = {};
+    if (apiKey) headers["X-Replicate-Token"] = apiKey;
+
+    const res = await fetch(`/api/status/${id}`, { headers });
     const data = await res.json();
 
     if (data.status === "succeeded") {
@@ -52,9 +59,12 @@ async function pollUntilDone(
 }
 
 export default function VideoGenerator() {
+  const { apiKey, loaded } = useApiKey();
+
   const [prompt, setPrompt] = useState("");
   const [images, setImages] = useState<string[]>([]);
   const [duration, setDuration] = useState<DurationId>("short");
+  const [aspectRatio, setAspectRatio] = useState<AspectRatio>("16:9");
 
   const [phase, setPhase] = useState<Phase>("idle");
   const [clipStatuses, setClipStatuses] = useState<ClipStatus[]>([]);
@@ -82,6 +92,9 @@ export default function VideoGenerator() {
     setStitchPct(0);
     setClipStatuses(Array(numClips).fill("queued"));
 
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (apiKey) headers["X-Replicate-Token"] = apiKey;
+
     try {
       // Stagger prediction starts 12 s apart — Replicate free tier allows
       // only 6 req/min with a burst of 1, so firing all at once causes 429s.
@@ -94,16 +107,17 @@ export default function VideoGenerator() {
           updateClipStatus(i, "starting");
           const res = await fetch("/api/generate", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers,
             body: JSON.stringify({
               prompt: prompt.trim(),
               image: images[0] ?? null,
+              aspectRatio,
             }),
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error ?? "Failed to start clip");
 
-          return pollUntilDone(data.id, (s) => updateClipStatus(i, s));
+          return pollUntilDone(data.id, apiKey, (s) => updateClipStatus(i, s));
         })()
       );
 
@@ -121,7 +135,13 @@ export default function VideoGenerator() {
       setVideoUrl(merged);
       setPhase("done");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      const msg = err instanceof Error ? err.message : "Something went wrong";
+      const is402 = msg.includes("402") || msg.toLowerCase().includes("insufficient credit") || msg.toLowerCase().includes("payment required");
+      setError(
+        is402
+          ? "Insufficient credits on your Replicate key. Get a fresh free key at replicate.com/account/api-tokens and update it above."
+          : msg
+      );
       setPhase("failed");
     }
   };
@@ -137,9 +157,13 @@ export default function VideoGenerator() {
   const doneOpt = DURATION_OPTIONS.find((d) => d.id === duration)!;
   const doneClips = clipStatuses.filter((s) => s === "done").length;
   const totalClips = doneOpt.clips;
+  const busy = phase === "generating" || phase === "stitching";
 
   return (
     <div className="max-w-2xl mx-auto space-y-5">
+      {/* API Key */}
+      {loaded && <ApiKeySetup />}
+
       {/* Reference images */}
       <div>
         <div className="flex items-center gap-2 mb-2">
@@ -166,34 +190,61 @@ export default function VideoGenerator() {
         </div>
       )}
 
-      {/* Duration selector */}
-      <div>
-        <p className="text-sm font-medium text-gray-300 mb-2">Video Duration</p>
-        <div className="grid grid-cols-3 gap-3">
-          {DURATION_OPTIONS.map((opt) => (
-            <button
-              key={opt.id}
-              onClick={() => setDuration(opt.id)}
-              disabled={phase === "generating" || phase === "stitching"}
-              className={`p-4 rounded-xl border text-center transition-all ${
-                duration === opt.id
-                  ? "border-purple-500 bg-purple-500/10 text-white"
-                  : "border-white/10 bg-white/5 text-gray-400 hover:border-white/20 hover:text-gray-300"
-              } disabled:opacity-50 disabled:cursor-not-allowed`}
-            >
-              <div className="font-semibold text-sm">{opt.label}</div>
-              <div className="text-xs mt-0.5 opacity-60">{opt.subLabel}</div>
-              {opt.clips > 1 && (
-                <div className="text-xs mt-1 opacity-40">{opt.clips} clips</div>
-              )}
-            </button>
-          ))}
+      {/* Duration + Aspect ratio row */}
+      <div className="space-y-3">
+        <div>
+          <p className="text-sm font-medium text-gray-300 mb-2">Video Duration</p>
+          <div className="grid grid-cols-3 gap-3">
+            {DURATION_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                onClick={() => setDuration(opt.id)}
+                disabled={busy}
+                className={`p-4 rounded-xl border text-center transition-all ${
+                  duration === opt.id
+                    ? "border-purple-500 bg-purple-500/10 text-white"
+                    : "border-white/10 bg-white/5 text-gray-400 hover:border-white/20 hover:text-gray-300"
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                <div className="font-semibold text-sm">{opt.label}</div>
+                <div className="text-xs mt-0.5 opacity-60">{opt.subLabel}</div>
+                {opt.clips > 1 && (
+                  <div className="text-xs mt-1 opacity-40">{opt.clips} clips</div>
+                )}
+              </button>
+            ))}
+          </div>
+          {duration !== "short" && (
+            <p className="text-xs text-gray-600 mt-2">
+              ⏱ Clips start 12 s apart to stay within free-tier rate limits, then generate in parallel — total wait ~4–7 min
+            </p>
+          )}
         </div>
-        {duration !== "short" && (
-          <p className="text-xs text-gray-600 mt-2">
-            ⏱ Clips start 12 s apart to stay within free-tier rate limits, then generate in parallel — total wait ~4–7 min
-          </p>
-        )}
+
+        {/* Aspect ratio */}
+        <div>
+          <p className="text-sm font-medium text-gray-300 mb-2">Aspect Ratio</p>
+          <div className="flex gap-3">
+            {([
+              { id: "16:9", label: "16:9", sub: "Landscape / YouTube" },
+              { id: "9:16", label: "9:16", sub: "Portrait / Reels / TikTok" },
+            ] as { id: AspectRatio; label: string; sub: string }[]).map((opt) => (
+              <button
+                key={opt.id}
+                onClick={() => setAspectRatio(opt.id)}
+                disabled={busy}
+                className={`flex-1 py-3 rounded-xl border text-center transition-all ${
+                  aspectRatio === opt.id
+                    ? "border-blue-500 bg-blue-500/10 text-white"
+                    : "border-white/10 bg-white/5 text-gray-400 hover:border-white/20 hover:text-gray-300"
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                <div className="font-semibold text-sm">{opt.label}</div>
+                <div className="text-xs mt-0.5 opacity-60">{opt.sub}</div>
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Prompt */}
@@ -215,16 +266,16 @@ export default function VideoGenerator() {
                 : "Describe the video you want to create…"
             }
             className="w-full bg-transparent text-white placeholder-gray-600 p-4 min-h-[100px] resize-none outline-none text-base"
-            disabled={phase === "generating" || phase === "stitching"}
+            disabled={busy}
           />
           <div className="flex items-center justify-between px-4 pb-3 border-t border-white/5">
             <span className="text-xs text-gray-600">{prompt.length}/500</span>
             <button
               onClick={handleGenerate}
-              disabled={!prompt.trim() || phase === "generating" || phase === "stitching"}
+              disabled={!prompt.trim() || busy}
               className="flex items-center gap-2 px-5 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-blue-600 text-white text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:from-purple-500 hover:to-blue-500 transition-all"
             >
-              {phase === "generating" || phase === "stitching" ? (
+              {busy ? (
                 <>
                   <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />

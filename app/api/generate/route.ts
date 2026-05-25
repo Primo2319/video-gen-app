@@ -8,26 +8,29 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function POST(request: NextRequest) {
   try {
-    const { prompt, image } = await request.json();
+    const { prompt, image, aspectRatio } = await request.json();
 
     if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
       return NextResponse.json({ error: "Prompt is required" }, { status: 400 });
     }
 
-    if (!process.env.REPLICATE_API_TOKEN) {
+    const token =
+      request.headers.get("X-Replicate-Token") || process.env.REPLICATE_API_TOKEN;
+
+    if (!token) {
       return NextResponse.json(
-        { error: "REPLICATE_API_TOKEN is not configured on the server." },
-        { status: 500 }
+        { error: "No Replicate API key found. Please add your API key in the settings above." },
+        { status: 401 }
       );
     }
 
-    const replicate = new Replicate({ auth: process.env.REPLICATE_API_TOKEN });
+    const replicate = new Replicate({ auth: token });
     const modelId = image ? I2V_MODEL : T2V_MODEL;
 
     const input: Record<string, unknown> = {
       prompt: prompt.trim(),
       negative_prompt: "blurry, low quality, distorted, watermark",
-      aspect_ratio: "16:9",
+      aspect_ratio: aspectRatio === "9:16" ? "9:16" : "16:9",
       fast_mode: "Balanced",
     };
     if (image) input.image = image;
