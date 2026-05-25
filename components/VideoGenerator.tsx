@@ -33,12 +33,12 @@ const EXAMPLES = [
 
 async function pollUntilDone(
   id: string,
-  apiKey: string,
+  pollKey: string,
   onStatus: (s: ClipStatus) => void
 ): Promise<string> {
   while (true) {
     const headers: Record<string, string> = {};
-    if (apiKey) headers["X-Replicate-Token"] = apiKey;
+    if (pollKey) headers["X-Replicate-Token"] = pollKey;
 
     const res = await fetch(`/api/status/${id}`, { headers });
     const data = await res.json();
@@ -59,7 +59,7 @@ async function pollUntilDone(
 }
 
 export default function VideoGenerator() {
-  const { apiKey, loaded } = useApiKey();
+  const { apiKeys, loaded } = useApiKey();
 
   const [prompt, setPrompt] = useState("");
   const [images, setImages] = useState<string[]>([]);
@@ -93,7 +93,8 @@ export default function VideoGenerator() {
     setClipStatuses(Array(numClips).fill("queued"));
 
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (apiKey) headers["X-Replicate-Token"] = apiKey;
+    // Send all keys so the server can rotate through them on 402
+    if (apiKeys.length > 0) headers["X-Replicate-Tokens"] = apiKeys.join(",");
 
     try {
       // Stagger prediction starts 12 s apart — Replicate free tier allows
@@ -117,7 +118,9 @@ export default function VideoGenerator() {
           const data = await res.json();
           if (!res.ok) throw new Error(data.error ?? "Failed to start clip");
 
-          return pollUntilDone(data.id, apiKey, (s) => updateClipStatus(i, s));
+          // Use the specific key that was chosen by the server for this prediction
+          const pollKey = data.keyIndex >= 0 ? (apiKeys[data.keyIndex] ?? "") : "";
+          return pollUntilDone(data.id, pollKey, (s) => updateClipStatus(i, s));
         })()
       );
 

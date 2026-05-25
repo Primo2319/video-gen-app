@@ -2,27 +2,35 @@
 
 import { useState, useEffect } from "react";
 
-const STORAGE_KEY = "replicate_api_key";
+const STORAGE_KEY = "replicate_api_keys";
 
 export function useApiKey() {
-  const [apiKey, setApiKeyState] = useState<string>("");
+  const [apiKeys, setApiKeysState] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY) ?? "";
-    setApiKeyState(stored);
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      const parsed: string[] = raw ? JSON.parse(raw) : [];
+      setApiKeysState(Array.isArray(parsed) ? parsed : []);
+    } catch {
+      setApiKeysState([]);
+    }
     setLoaded(true);
   }, []);
 
-  const setApiKey = (key: string) => {
-    const trimmed = key.trim();
-    if (trimmed) {
-      localStorage.setItem(STORAGE_KEY, trimmed);
+  const setApiKeys = (keys: string[]) => {
+    const trimmed = keys.map((k) => k.trim()).filter(Boolean);
+    if (trimmed.length) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
     } else {
       localStorage.removeItem(STORAGE_KEY);
     }
-    setApiKeyState(trimmed);
+    setApiKeysState(trimmed);
   };
 
-  return { apiKey, setApiKey, loaded };
+  // Convenience: first key only (legacy)
+  const apiKey = apiKeys[0] ?? "";
+
+  return { apiKey, apiKeys, setApiKeys, loaded };
 }
