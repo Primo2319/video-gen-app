@@ -10,7 +10,7 @@ const stitchVideos = async (urls: string[], onProgress: (p: number) => void) => 
   return fn(urls, onProgress);
 };
 
-type ClipStatus = "pending" | "processing" | "done" | "failed";
+type ClipStatus = "queued" | "starting" | "processing" | "done" | "failed";
 type Phase = "idle" | "generating" | "stitching" | "done" | "failed";
 
 const DURATION_OPTIONS = [
@@ -80,34 +80,34 @@ export default function VideoGenerator() {
     setVideoUrl(null);
     setError(null);
     setStitchPct(0);
-    setClipStatuses(Array(numClips).fill("pending"));
+    setClipStatuses(Array(numClips).fill("queued"));
 
     try {
-      // Start all predictions in parallel
-      const startClip = () =>
-        fetch("/api/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            prompt: prompt.trim(),
-            image: images[0] ?? null,
-          }),
-        }).then((r) => r.json());
+      // Stagger prediction starts 12 s apart — Replicate free tier allows
+      // only 6 req/min with a burst of 1, so firing all at once causes 429s.
+      const STAGGER_MS = 12000;
 
-      const predictions = await Promise.all(
-        Array.from({ length: numClips }, startClip)
+      const clipPromises = Array.from({ length: numClips }, (_, i) =>
+        (async () => {
+          if (i > 0) await new Promise((r) => setTimeout(r, i * STAGGER_MS));
+
+          updateClipStatus(i, "starting");
+          const res = await fetch("/api/generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              prompt: prompt.trim(),
+              image: images[0] ?? null,
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error ?? "Failed to start clip");
+
+          return pollUntilDone(data.id, (s) => updateClipStatus(i, s));
+        })()
       );
 
-      // Check if any prediction failed to start
-      const startError = predictions.find((p) => p.error);
-      if (startError) throw new Error(startError.error);
-
-      // Poll all clips in parallel
-      const clipUrls = await Promise.all(
-        predictions.map((pred, i) =>
-          pollUntilDone(pred.id, (s) => updateClipStatus(i, s))
-        )
-      );
+      const clipUrls = await Promise.all(clipPromises);
 
       if (numClips === 1) {
         setVideoUrl(clipUrls[0]);
@@ -191,7 +191,7 @@ export default function VideoGenerator() {
         </div>
         {duration !== "short" && (
           <p className="text-xs text-gray-600 mt-2">
-            ⚡ {doneOpt.clips} clips generated in parallel — total time similar to a single clip (~3–6 min)
+            ⏱ Clips start 12 s apart to stay within free-tier rate limits, then generate in parallel — total wait ~4–7 min
           </p>
         )}
       </div>
@@ -282,7 +282,7 @@ export default function VideoGenerator() {
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium ${
                     s === "done"
                       ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
-                      : s === "processing"
+                      : s === "processing" || s === "starting"
                       ? "border-blue-500/40 bg-blue-500/10 text-blue-400"
                       : s === "failed"
                       ? "border-red-500/40 bg-red-500/10 text-red-400"
@@ -293,15 +293,17 @@ export default function VideoGenerator() {
                     <svg className="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                     </svg>
-                  ) : s === "processing" ? (
+                  ) : s === "processing" || s === "starting" ? (
                     <svg className="w-3.5 h-3.5 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                     </svg>
                   ) : (
-                    <div className="w-3.5 h-3.5 rounded-full border border-current shrink-0" />
+                    <div className="w-3.5 h-3.5 rounded-full border border-current shrink-0 opacity-40" />
                   )}
-                  Clip {i + 1}
+                  <span>Clip {i + 1}</span>
+                  {s === "queued" && <span className="opacity-40 text-[10px]">queued</span>}
+                  {s === "starting" && <span className="opacity-70 text-[10px]">starting…</span>}
                 </div>
               ))}
             </div>
