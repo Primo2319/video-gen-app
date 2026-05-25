@@ -6,6 +6,19 @@ const T2V_MODEL = "wavespeedai/wan-2.1-t2v-720p";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Collect all REPLICATE_API_TOKEN* env vars into an ordered pool. */
+function getKeyPool(): string[] {
+  const pool: string[] = [];
+  // Primary key
+  if (process.env.REPLICATE_API_TOKEN) pool.push(process.env.REPLICATE_API_TOKEN);
+  // Additional keys: REPLICATE_API_TOKEN_2 … REPLICATE_API_TOKEN_10
+  for (let i = 2; i <= 10; i++) {
+    const k = process.env[`REPLICATE_API_TOKEN_${i}`];
+    if (k) pool.push(k);
+  }
+  return pool;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { prompt, image, aspectRatio } = await request.json();
@@ -14,19 +27,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Prompt is required" }, { status: 400 });
     }
 
-    // Build key pool: user-supplied keys first, env fallback last
-    const userKeysHeader = request.headers.get("X-Replicate-Tokens") ?? "";
-    const userKeys = userKeysHeader
-      .split(",")
-      .map((k) => k.trim())
-      .filter(Boolean);
-    const envKey = process.env.REPLICATE_API_TOKEN ?? "";
-    const keyPool = envKey ? [...userKeys, envKey] : userKeys;
-
+    const keyPool = getKeyPool();
     if (keyPool.length === 0) {
       return NextResponse.json(
-        { error: "No Replicate API key found. Please add your API key in the settings above." },
-        { status: 401 }
+        { error: "Video generation is temporarily unavailable. Please try again later." },
+        { status: 503 }
       );
     }
 
@@ -44,43 +49,39 @@ export async function POST(request: NextRequest) {
       const token = keyPool[ki];
       const replicate = new Replicate({ auth: token });
 
-      // Retry up to 4 times on 429 with increasing back-off
-      let rateLimited = false;
+      let skipToNext = false;
       for (let attempt = 0; attempt < 4; attempt++) {
         try {
           const prediction = await replicate.predictions.create({ model: modelId, input });
-          // Return which key index (from user-supplied list) was used, so the
-          // client can pass the right key when polling status.
-          return NextResponse.json({
-            id: prediction.id,
-            status: prediction.status,
-            keyIndex: ki < userKeys.length ? ki : -1,
-          });
+          // Return key index so the status route can poll with the same key
+          return NextResponse.json({ id: prediction.id, status: prediction.status, ki });
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
-          if (msg.includes("402") || msg.toLowerCase().includes("insufficient credit") || msg.toLowerCase().includes("payment required")) {
-            // This key has no credits — try next key immediately
-            rateLimited = false;
+          if (
+            msg.includes("402") ||
+            msg.toLowerCase().includes("insufficient credit") ||
+            msg.toLowerCase().includes("payment required")
+          ) {
+            skipToNext = true;
             break;
           }
-          if (msg.includes("429") || msg.includes("Too Many Requests") || msg.includes("throttled")) {
-            // Back off: 15s, 30s, 45s then retry same key
+          if (
+            msg.includes("429") ||
+            msg.includes("Too Many Requests") ||
+            msg.includes("throttled")
+          ) {
             await sleep(15000 * (attempt + 1));
-            rateLimited = true;
           } else {
             throw err;
           }
         }
       }
-      if (rateLimited) continue; // all retries exhausted on rate limit, try next key
+      if (!skipToNext) break; // rate-limit retries exhausted — bail out (don't silently skip)
     }
 
     return NextResponse.json(
-      {
-        error:
-          "All API keys have run out of credits. Add more keys at replicate.com/account/api-tokens (create additional free accounts to get more credits).",
-      },
-      { status: 402 }
+      { error: "Video generation is temporarily unavailable. Please try again later." },
+      { status: 503 }
     );
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Failed to start generation";
