@@ -1,17 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import Replicate from "replicate";
 
-// Both modes use minimax/video-01 — it supports first_frame_image for image-guided generation
-const MODEL = "minimax/video-01";
-
-const TEXT_MODELS: Record<string, string> = {
-  minimax: "minimax/video-01",
-  wan: "wan-ai/wan2.1-t2v-480p",
-};
+// minimax/hailuo-2.3: confirmed supports prompt + first_frame_image + duration (6|10)
+const MODEL = "minimax/hailuo-2.3";
 
 export async function POST(request: NextRequest) {
   try {
-    const { prompt, model = "minimax", image } = await request.json();
+    const { prompt, image, duration = 10 } = await request.json();
 
     if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
       return NextResponse.json({ error: "Prompt is required" }, { status: 400 });
@@ -26,13 +21,17 @@ export async function POST(request: NextRequest) {
 
     const replicate = new Replicate({ auth: process.env.REPLICATE_API_TOKEN });
 
-    // When an image is provided use minimax/video-01 with first_frame_image.
-    // That parameter tells the model to use the image as the visual reference/starting frame.
-    const modelId = image ? MODEL : (TEXT_MODELS[model] ?? TEXT_MODELS.minimax);
-    const input: Record<string, unknown> = { prompt: prompt.trim() };
+    const input: Record<string, unknown> = {
+      prompt: prompt.trim(),
+      duration: duration === 6 ? 6 : 10,
+      resolution: "768p",
+      prompt_optimizer: true,
+    };
+
+    // first_frame_image is confirmed supported by hailuo-2.3
     if (image) input.first_frame_image = image;
 
-    const prediction = await replicate.predictions.create({ model: modelId, input });
+    const prediction = await replicate.predictions.create({ model: MODEL, input });
 
     return NextResponse.json({ id: prediction.id, status: prediction.status });
   } catch (error: unknown) {
