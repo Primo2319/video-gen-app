@@ -14,9 +14,9 @@ type ClipStatus = "pending" | "processing" | "done" | "failed";
 type Phase = "idle" | "generating" | "stitching" | "done" | "failed";
 
 const DURATION_OPTIONS = [
-  { id: "short",  label: "Short",  subLabel: "~10 sec",  clips: 1, seconds: 10 },
-  { id: "medium", label: "Medium", subLabel: "~30 sec",  clips: 3, seconds: 30 },
-  { id: "long",   label: "Long",   subLabel: "~60 sec",  clips: 6, seconds: 60 },
+  { id: "short",  label: "Short",  subLabel: "~5 sec",   clips: 1,  seconds: 5  },
+  { id: "medium", label: "Medium", subLabel: "~30 sec",  clips: 6,  seconds: 30 },
+  { id: "long",   label: "Long",   subLabel: "~60 sec",  clips: 12, seconds: 60 },
 ] as const;
 
 type DurationId = (typeof DURATION_OPTIONS)[number]["id"];
@@ -90,8 +90,7 @@ export default function VideoGenerator() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             prompt: prompt.trim(),
-            image: images[0] ?? null,  // primary reference image → first_frame_image
-            duration: 10,
+            image: images[0] ?? null,
           }),
         }).then((r) => r.json());
 
@@ -162,7 +161,7 @@ export default function VideoGenerator() {
             <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           <span>
-            Using <strong>MiniMax Hailuo 2.3</strong> — your first image is set as the video&apos;s opening frame and guides the entire visual style.
+            Using <strong>WAN 2.1 Image-to-Video</strong> — your first image is set as the video&apos;s opening frame and guides the entire visual style.
           </span>
         </div>
       )}
